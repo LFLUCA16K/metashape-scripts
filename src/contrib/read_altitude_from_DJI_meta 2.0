@@ -1,0 +1,108 @@
+import Metashape
+from PySide2.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QMessageBox
+
+# Controllo compatibilità
+compatible_major_version = "2.2"
+found_major_version = ".".join(Metashape.app.version.split('.')[:2])
+if found_major_version != compatible_major_version:
+    raise Exception("Incompatible Metashape version: {} != {}".format(found_major_version, compatible_major_version))
+
+# Dizionario per salvare i dati originali prima della modifica
+original_altitudes = {}
+
+class DJIAltitudeTool(QWidget):
+    """ Interfaccia grafica per scegliere tra lettura e ripristino delle quote DJI """
+    
+    def __init__(self):
+        super().__init__()
+        self.initUI()
+
+    def initUI(self):
+        """ Crea l'interfaccia grafica """
+        self.setWindowTitle("Gestione Quote DJI")
+        self.setGeometry(100, 100, 350, 150)
+
+        layout = QVBoxLayout()
+
+        self.label = QLabel("Seleziona un'operazione:")
+        layout.addWidget(self.label)
+
+        self.btnReadDJI = QPushButton("📥 Leggi RelativeAltitude DJI")
+        self.btnReadDJI.clicked.connect(self.read_DJI_relative_altitude)
+        layout.addWidget(self.btnReadDJI)
+
+        self.btnRestore = QPushButton("🔄 Ripristina Quote Originali")
+        self.btnRestore.clicked.connect(self.restore_original_altitudes)
+        layout.addWidget(self.btnRestore)
+
+        self.btnClose = QPushButton("❌ Chiudi")
+        self.btnClose.clicked.connect(self.close)
+        layout.addWidget(self.btnClose)
+
+        self.setLayout(layout)
+        self.show()
+
+    def read_DJI_relative_altitude(self):
+        """ Legge i dati di altitudine relativa DJI e sovrascrive le quote nelle immagini """
+        global original_altitudes
+        doc = Metashape.app.document
+
+        if not len(doc.chunks):
+            QMessageBox.warning(self, "Errore", "❌ Nessun chunk disponibile!")
+            return
+
+        print("📌 Script avviato...")
+        chunk = doc.chunk
+
+        for camera in chunk.cameras:
+            if not camera.type == Metashape.Camera.Type.Regular:  # Salta tracce video
+                continue
+            if not camera.reference.location:  # Salta se non ha coordinate
+                continue
+            
+            # Salva la quota originale prima di modificarla
+            if camera not in original_altitudes:
+                original_altitudes[camera] = camera.reference.location.z
+
+            # Legge e sostituisce la quota con quella di DJI/RelativeAltitude
+            if "DJI/RelativeAltitude" in camera.photo.meta.keys():
+                z = float(camera.photo.meta["DJI/RelativeAltitude"])
+                camera.reference.location = (camera.reference.location.x, camera.reference.location.y, z)
+
+        QMessageBox.information(self, "Completato", "✅ Quota aggiornata con i dati DJI!")
+        print("✅ Script completato! Quota aggiornata con i dati DJI.")
+
+    def restore_original_altitudes(self):
+        """ Ripristina le quote originali delle immagini, se disponibili """
+        global original_altitudes
+        doc = Metashape.app.document
+
+        if not len(doc.chunks):
+            QMessageBox.warning(self, "Errore", "❌ Nessun chunk disponibile!")
+            return
+
+        print("🔄 Ripristino delle quote originali...")
+
+        chunk = doc.chunk
+
+        restored_count = 0
+        for camera in chunk.cameras:
+            if camera in original_altitudes:
+                camera.reference.location = (camera.reference.location.x, camera.reference.location.y, original_altitudes[camera])
+                restored_count += 1
+
+        if restored_count > 0:
+            QMessageBox.information(self, "Completato", f"✅ {restored_count} quote ripristinate con successo!")
+            print(f"✅ {restored_count} quote ripristinate con successo!")
+        else:
+            QMessageBox.warning(self, "Nessun dato", "⚠️ Nessun valore originale da ripristinare.")
+            print("⚠️ Nessun valore originale da ripristinare.")
+
+def open_DJI_tool():
+    """ Apre la finestra di gestione delle quote DJI """
+    global tool
+    tool = DJIAltitudeTool()
+
+# Aggiunta del comando nel menu di Metashape
+Metashape.app.addMenuItem("Scripts/Manage DJI Altitudes", open_DJI_tool)
+print("✅ Script caricato! Troverai il comando in: Scripts > Manage DJI Altitudes")
